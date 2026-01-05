@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_URL = '/api';
+// Backend API URL - uses environment variable or defaults to localhost for development
+const API_URL = import.meta.env.VITE_API_URL || 'https://marwadi-noma.onrender.com/api';
 
 const api = axios.create({
   baseURL: API_URL,

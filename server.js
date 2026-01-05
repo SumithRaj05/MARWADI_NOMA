@@ -15,15 +15,28 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// CORS configuration - allow frontend origins
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || '*',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // API Routes
 app.use('/api', routes);
 
-// Serve static files from React build
+// Health check route
+app.get('/', (req, res) => {
+  res.json({ message: 'SAMBHAV Server is running!' });
+});
+
+// Serve static files from React build (optional - for self-hosted)
 app.use(express.static(path.join(__dirname, 'client', 'dist')));
 
 // Handle React routing - serve index.html for all non-API routes
