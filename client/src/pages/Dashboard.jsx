@@ -31,19 +31,48 @@ const Dashboard = ({ setIsAuthenticated }) => {
     }
   };
 
-  // Real-time filtered records
-  const filteredRecords = useMemo(() => {
-    if (!searchQuery.trim()) return records;
-    
-    const query = searchQuery.toLowerCase().trim();
-    return records.filter((record) => {
-      return (
-        record.userName.toLowerCase().includes(query) ||
-        record.mobileNumber.toLowerCase().includes(query) ||
-        record.amount.toString().includes(query) ||
-        record.location.toLowerCase().includes(query)
-      );
+  // Group records by userName (ledger style - one row per user with total)
+  const ledgerRecords = useMemo(() => {
+    const filtered = searchQuery.trim()
+      ? records.filter((record) => {
+          const query = searchQuery.toLowerCase().trim();
+          return (
+            record.userName.toLowerCase().includes(query) ||
+            record.mobileNumber.toLowerCase().includes(query) ||
+            record.amount.toString().includes(query) ||
+            record.location.toLowerCase().includes(query)
+          );
+        })
+      : records;
+
+    const ledger = {};
+    filtered.forEach((record) => {
+      const key = record.userName.toLowerCase();
+      if (!ledger[key]) {
+        ledger[key] = {
+          userName: record.userName,
+          mobileNumber: record.mobileNumber,
+          location: record.location,
+          totalAmount: 0,
+          entryCount: 0,
+          latestDate: record.createdAt,
+          billImages: [],
+          entryIds: [],
+        };
+      }
+      ledger[key].totalAmount += record.amount;
+      ledger[key].entryCount += 1;
+      ledger[key].billImages.push(record.billImage.url);
+      ledger[key].entryIds.push(record._id);
+      // Keep the latest date
+      if (new Date(record.createdAt) > new Date(ledger[key].latestDate)) {
+        ledger[key].latestDate = record.createdAt;
+      }
     });
+
+    return Object.values(ledger).sort((a, b) => 
+      new Date(b.latestDate) - new Date(a.latestDate)
+    );
   }, [records, searchQuery]);
 
   const handleLogout = () => {
@@ -52,16 +81,16 @@ const Dashboard = ({ setIsAuthenticated }) => {
     navigate('/login');
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this record?')) return;
+  const handleDeleteAll = async (entryIds) => {
+    if (!window.confirm(`Are you sure you want to delete all ${entryIds.length} entries for this user?`)) return;
     
     try {
-      setDeleteLoading(id);
-      await financeAPI.delete(id);
-      setRecords(records.filter(record => record._id !== id));
+      setDeleteLoading(entryIds[0]);
+      await Promise.all(entryIds.map(id => financeAPI.delete(id)));
+      setRecords(records.filter(record => !entryIds.includes(record._id)));
     } catch (error) {
-      console.error('Error deleting record:', error);
-      alert('Failed to delete record');
+      console.error('Error deleting records:', error);
+      alert('Failed to delete records');
     } finally {
       setDeleteLoading(null);
     }
@@ -93,6 +122,11 @@ const Dashboard = ({ setIsAuthenticated }) => {
     });
   };
 
+  // Calculate grand total
+  const grandTotal = useMemo(() => {
+    return ledgerRecords.reduce((sum, record) => sum + record.totalAmount, 0);
+  }, [ledgerRecords]);
+
   return (
     <div className="dashboard-container">
       <header className="dashboard-header">
@@ -113,14 +147,8 @@ const Dashboard = ({ setIsAuthenticated }) => {
       <main className="dashboard-main">
         <div className="dashboard-title-bar">
           <div>
-            <h2>Finance Records</h2>
-            <p>
-              {searchQuery ? (
-                <>Showing {filteredRecords.length} of {records.length} entries</>
-              ) : (
-                <>{records.length} total entries</>
-              )}
-            </p>
+            <h2>Account Ledger</h2>
+            <p>{ledgerRecords.length} clients • {records.length} entries • Total: {formatAmount(grandTotal)}</p>
           </div>
           <button className="add-btn" onClick={() => setShowAddModal(true)}>
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -171,7 +199,7 @@ const Dashboard = ({ setIsAuthenticated }) => {
                 Add First Record
               </button>
             </div>
-          ) : filteredRecords.length === 0 ? (
+          ) : ledgerRecords.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">🔍</div>
               <h3>No Results Found</h3>
@@ -187,41 +215,50 @@ const Dashboard = ({ setIsAuthenticated }) => {
                   <th>#</th>
                   <th>User Name</th>
                   <th>Mobile Number</th>
-                  <th>Amount</th>
                   <th>Location</th>
-                  <th>Bill Image</th>
-                  <th>Date</th>
+                  <th>Entries</th>
+                  <th>Total Amount</th>
+                  <th>Last Updated</th>
+                  <th>Bills</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredRecords.map((record, index) => (
-                  <tr key={record._id}>
+                {ledgerRecords.map((record, index) => (
+                  <tr key={record.userName}>
                     <td className="row-number">{index + 1}</td>
                     <td className="user-name">{record.userName}</td>
                     <td className="mobile">{record.mobileNumber}</td>
-                    <td className="amount">{formatAmount(record.amount)}</td>
                     <td className="location">{record.location}</td>
-                    <td>
-                      <button
-                        className="view-btn"
-                        onClick={() => handleViewImage(record.billImage.url)}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                          <circle cx="12" cy="12" r="3"></circle>
-                        </svg>
-                        View
-                      </button>
+                    <td className="entry-count">
+                      <span className="badge">{record.entryCount}</span>
                     </td>
-                    <td className="date">{formatDate(record.createdAt)}</td>
+                    <td className="amount">{formatAmount(record.totalAmount)}</td>
+                    <td className="date">{formatDate(record.latestDate)}</td>
+                    <td>
+                      <div className="bills-btn-group">
+                        {record.billImages.slice(0, 3).map((url, i) => (
+                          <button
+                            key={i}
+                            className="view-btn-small"
+                            onClick={() => handleViewImage(url)}
+                            title={`View Bill ${i + 1}`}
+                          >
+                            {i + 1}
+                          </button>
+                        ))}
+                        {record.billImages.length > 3 && (
+                          <span className="more-bills">+{record.billImages.length - 3}</span>
+                        )}
+                      </div>
+                    </td>
                     <td>
                       <button
                         className="delete-btn"
-                        onClick={() => handleDelete(record._id)}
-                        disabled={deleteLoading === record._id}
+                        onClick={() => handleDeleteAll(record.entryIds)}
+                        disabled={deleteLoading === record.entryIds[0]}
                       >
-                        {deleteLoading === record._id ? (
+                        {deleteLoading === record.entryIds[0] ? (
                           <span className="btn-spinner"></span>
                         ) : (
                           <>
@@ -237,6 +274,13 @@ const Dashboard = ({ setIsAuthenticated }) => {
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="total-row">
+                  <td colSpan="5" className="total-label">Grand Total</td>
+                  <td className="amount total-amount">{formatAmount(grandTotal)}</td>
+                  <td colSpan="3"></td>
+                </tr>
+              </tfoot>
             </table>
           )}
         </div>
